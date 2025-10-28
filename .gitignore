@@ -37,6 +37,7 @@ Thumbs.db
 # ===== IDE Folders =====
 .vscode/
 .idea/
+.vs/           # <-- Add this line (fixes your permission issue)
 
 # ===== Builds =====
 *.apk
