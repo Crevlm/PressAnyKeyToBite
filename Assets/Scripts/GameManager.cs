@@ -1,8 +1,7 @@
-using UnityEngine;
-using System.Collections.Generic;
-using System.Collections;
-using UnityEngine.UI;
+﻿using System.Collections;
 using TMPro;
+using UnityEngine;
+using UnityEngine.UI;
 
 public class GameManager : MonoBehaviour
 {
@@ -18,28 +17,33 @@ public class GameManager : MonoBehaviour
     public Button restartButton;
     public Button quitButton;
     public CanvasGroup gameOverCanvasGroup;
-    public float fadeDuration = 3f; //seconds for fade
-
+    public float fadeDuration = 3f;
 
     [Header("Sprites")]
     public SpriteRenderer victimSprite;
     public SpriteRenderer monsterSprite;
 
-
     [Header("Game Settings")]
     public int startingLives = 5;
-    public float minDelay = 1f; //Minimum time before the victim image pops up
-    public float maxDelay = 3f; // Maximum time before the next victim image pops up
-    public float reactionWindow = 0.8f; // Time window to react
+    public float minDelay = 1f;
+    public float maxDelay = 3f;
+    public float reactionWindow = 0.8f;
 
     [Header("Internal Variables")]
     private int score = 0;
     private int lives;
-    private bool targetIsVictim = false; // Tracks if the current sprite is the victim
-    private bool targetActive = false; // Tracks if the sprites can currently be seen 
+    private bool targetIsVictim = false;
+    private bool targetActive = false;
     private bool gameStarted = false;
     private bool gameOver = false;
+    private bool canAcceptInput = false;
+    private bool waitingForNextTarget = false;
 
+    [Header("Audio")]
+    public AudioSource biteAudioSource;
+    public AudioClip biteSound;
+    public AudioSource orcAudioSource;
+    public AudioClip orcSound;
 
     public void Awake()
     {
@@ -47,92 +51,84 @@ public class GameManager : MonoBehaviour
         if (quitButton != null) quitButton.onClick.AddListener(QuitGame);
     }
 
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
-        //Starting values
         score = 0;
         lives = startingLives;
-
-        //Hiding the gameover screen until end game
         if (gameOverPanel != null) gameOverPanel.SetActive(false);
-
-        //Update all of the text UI elements on the scene
         UpdateUI();
-
-        //Shows an intro message to begin the game!
         messageText.text = "Press Any Key to Begin";
 
-        //Make sure that both my sprites are disabled at the beginning. 
-        if (victimSprite != null)
-            victimSprite.enabled = false;
-
-        if (monsterSprite != null)
-            monsterSprite.enabled = false;
-        if (instructionsText != null)
-            instructionsText.gameObject.SetActive(false);
+        if (victimSprite != null) victimSprite.enabled = false;
+        if (monsterSprite != null) monsterSprite.enabled = false;
+        if (instructionsText != null) instructionsText.gameObject.SetActive(false);
     }
 
-    // Update is called once per frame
     void Update()
     {
-        //if the game is over stop
         if (gameOver) return;
 
-        //set the initial game start and warn the player to get ready. 
+        // Wait for player to start
         if (!gameStarted)
         {
             if (Input.anyKeyDown)
             {
                 gameStarted = true;
                 messageText.text = "Get ready...";
-
                 if (instructionsText != null)
                     instructionsText.gameObject.SetActive(true);
-
                 StartCoroutine(SpawnVictim());
             }
             return;
         }
 
-        // regular gameplay input below
+        // Gameplay input
         if (Input.anyKeyDown)
         {
-            if (targetActive)
+            // Too early (before target appears)
+            if (waitingForNextTarget && canAcceptInput && !targetActive)
+            {
+                Miss("Too soon!");
+                return;
+            }
+
+            // Valid input window (target visible)
+            if (targetActive && canAcceptInput)
             {
                 if (targetIsVictim)
                 {
+                    PlayBiteSound();
                     BiteSuccess();
                 }
                 else
                 {
-                    Miss("HEY! Why did you bite me? I'm here to HELP you!");
+                    PlayOrcSound();
+                    BiteMonster();
                 }
-               
-            }
-            else
-            {
-                Miss("Too soon!");
             }
         }
     }
 
     IEnumerator SpawnVictim()
-        {
-
+    {
         if (gameOver) yield break;
-            
 
+        // Small cooldown to prevent false inputs right after result
+        canAcceptInput = false;
+        waitingForNextTarget = false;
+        yield return new WaitForSeconds(0.3f);
 
-       
+        // Waiting phase — can trigger “Too soon!”
+        waitingForNextTarget = true;
+        canAcceptInput = true;
 
+        yield return new WaitForSeconds(Random.Range(minDelay, maxDelay));
 
-            //wait a random time before showing the next victim
-            yield return new WaitForSeconds(Random.Range(minDelay, maxDelay));
+        waitingForNextTarget = false;
 
-        // 70% chance to spawn a Victim and 30% chance to spawn a monster
-        float roll = Random.value; // 0-1 
-        targetIsVictim = roll <= 0.7f; // 70% chance it's a victim
+        // Pick victim or monster
+        float roll = Random.value;
+        targetIsVictim = roll <= 0.7f;
 
         if (targetIsVictim)
         {
@@ -148,84 +144,121 @@ public class GameManager : MonoBehaviour
         }
 
         targetActive = true;
+        canAcceptInput = true;
 
+        yield return new WaitForSeconds(reactionWindow);
 
-            //Player's reaction time window
-            yield return new WaitForSeconds(reactionWindow);
-
-            //If still active after the window, player has missed the bite
-            if (targetActive)
+        // Player missed window
+        if (targetActive)
+        {
+            if (targetIsVictim)
             {
-                Miss(targetIsVictim ?"Too slow!" : "Hesitated!");
+                Miss("Too slow!");
             }
-
-        }
-
-        void BiteSuccess()
-        {
-        if (gameOver) return;
-            score++;
-            targetActive = false;
-            victimSprite.enabled = false;
-            monsterSprite.enabled = false;
-            messageText.text = "Nice Bite!";
-            UpdateUI();
-            StartCoroutine(SpawnVictim());
-        }
-
-        void Miss(string msg)
-        {
-            lives--;
-             if (lives < 0) lives = 0; //clamps lives to 0 to avoid negative lives 
-            messageText.text = msg;
-
-            //stop showing the sprites for the round
-            targetActive = false;
-            victimSprite.enabled = false;
-            monsterSprite.enabled = false;
-
-            UpdateUI();
-
-            //Check for game over
-            if (lives <= 0)
+            else
             {
-                gameOver = true;
+                messageText.text = "Nice, the Orc was let through!";
                 targetActive = false;
-
-                StopAllCoroutines(); //Added so the victims stop spawning after last life is done
-
-                 if (victimSprite != null) victimSprite.enabled = false;
-                 if (monsterSprite != null) monsterSprite.enabled = false;
-                 if (instructionsText != null)
-                instructionsText.gameObject.SetActive(false);
-
-            // Show Game Over screen with fade
-            if (gameOverPanel != null)
-            {
-                gameOverPanel.SetActive(true);
-
-                // Reset the alpha before fade
-                if (gameOverCanvasGroup != null)
-                {
-                    gameOverCanvasGroup.alpha = 0f;
-                    StartCoroutine(FadeInGameOver());
-                }
+                canAcceptInput = false;
+                victimSprite.enabled = false;
+                monsterSprite.enabled = false;
+                StartCoroutine(SpawnVictim());
             }
-
-            // Update final score message
-            if (gameOverText != null)
-                gameOverText.text = $"Game Over!\nFinal Score: {score}";
-
-            if (messageText != null)
-                messageText.text = "";
-
-            return; // Fully stop here � no more spawns
         }
+    }
 
-        // If not game over, continue spawning
+    void BiteSuccess()
+    {
+        if (gameOver) return;
+        score++;
+        targetActive = false;
+        canAcceptInput = false;
+        victimSprite.enabled = false;
+        monsterSprite.enabled = false;
+        messageText.text = "Nice Bite!";
+        UpdateUI();
         StartCoroutine(SpawnVictim());
+    }
 
+    void BiteMonster()
+    {
+        messageText.text = "HEY! Why did you bite me? I'm here to HELP you!";
+        targetActive = false;
+        canAcceptInput = false;
+        victimSprite.enabled = false;
+        monsterSprite.enabled = false;
+        LoseLife();
+    }
+
+    void Miss(string msg)
+    {
+        lives--;
+        if (lives < 0) lives = 0;
+        messageText.text = msg;
+        targetActive = false;
+        canAcceptInput = false;
+        victimSprite.enabled = false;
+        monsterSprite.enabled = false;
+        UpdateUI();
+
+        if (lives <= 0)
+        {
+            EndGame();
+            return;
         }
+
+        // Shorter delay between messages and next round
+        StartCoroutine(NextRoundAfterDelay(0.4f));
+    }
+
+    IEnumerator NextRoundAfterDelay(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        StartCoroutine(SpawnVictim());
+    }
+
+    void LoseLife()
+    {
+        lives--;
+        if (lives < 0) lives = 0;
+        UpdateUI();
+
+        if (lives <= 0)
+        {
+            EndGame();
+            return;
+        }
+
+        StartCoroutine(SpawnVictim());
+    }
+
+    void EndGame()
+    {
+        gameOver = true;
+        targetActive = false;
+        canAcceptInput = false;
+        StopAllCoroutines();
+
+        if (victimSprite != null) victimSprite.enabled = false;
+        if (monsterSprite != null) monsterSprite.enabled = false;
+        if (instructionsText != null) instructionsText.gameObject.SetActive(false);
+
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.SetActive(true);
+            if (gameOverCanvasGroup != null)
+            {
+                gameOverCanvasGroup.alpha = 0f;
+                StartCoroutine(FadeInGameOver());
+            }
+        }
+
+        if (gameOverText != null)
+            gameOverText.text = $"Game Over!\nFinal Score: {score}";
+
+        if (messageText != null)
+            messageText.text = "";
+    }
 
     IEnumerator FadeInGameOver()
     {
@@ -240,49 +273,50 @@ public class GameManager : MonoBehaviour
         }
     }
 
-
     void UpdateUI()
-        {
-            scoreText.text = "Score: " + score;
-            livesText.text = "Lives: " + lives;
-        }
-    
+    {
+        scoreText.text = "Score: " + score;
+        livesText.text = "Lives: " + lives;
+    }
 
     public void RestartGame()
     {
-        Debug.Log("Restart Button Clicked");
-        //Stop all spawns
         StopAllCoroutines();
-
-        //Reset the core of the game
         score = 0;
         lives = startingLives;
         gameStarted = false;
         gameOver = false;
         targetActive = false;
         targetIsVictim = false;
+        canAcceptInput = false;
+        waitingForNextTarget = false;
 
-        //Hide all the sprites
         if (victimSprite != null) victimSprite.enabled = false;
         if (monsterSprite != null) monsterSprite.enabled = false;
-
-        if (instructionsText != null)
-            instructionsText.gameObject.SetActive(false);
-
-        // Hide the Game Over panel
+        if (instructionsText != null) instructionsText.gameObject.SetActive(false);
         if (gameOverPanel != null) gameOverPanel.SetActive(false);
 
-
-        // Refresh UI and prompt
         UpdateUI();
         if (messageText != null) messageText.text = "Press Any Key to Begin";
-
     }
+
     public void QuitGame()
     {
         Application.Quit();
 #if UNITY_EDITOR
         UnityEditor.EditorApplication.isPlaying = false;
 #endif
+    }
+
+    void PlayBiteSound()
+    {
+        if (biteAudioSource != null && biteSound != null)
+            biteAudioSource.PlayOneShot(biteSound);
+    }
+
+    void PlayOrcSound()
+    {
+        if (orcAudioSource != null && orcSound != null)
+            orcAudioSource.PlayOneShot(orcSound);
     }
 }
